@@ -2,6 +2,7 @@ package com.twosmoothworkstation
 
 import android.content.Context
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.net.Uri
 
 class AudioPlayer(context: Context) {
@@ -35,10 +36,7 @@ class AudioPlayer(context: Context) {
     }
 
     fun play() { if (prepared) mediaPlayer?.start() }
-
-    fun pause() {
-        if (prepared && mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
-    }
+    fun pause() { if (prepared && mediaPlayer?.isPlaying == true) mediaPlayer?.pause() }
 
     fun stop() {
         if (!prepared) return
@@ -65,7 +63,7 @@ class AudioPlayer(context: Context) {
 
     private fun applyPlaybackSpeed() {
         try {
-            mediaPlayer?.playbackParams = MediaPlayer.PlaybackParams().setSpeed(playbackSpeed).setPitch(1.0f)
+            mediaPlayer?.playbackParams = PlaybackParams().setSpeed(playbackSpeed).setPitch(1.0f)
         } catch (_: IllegalStateException) { }
     }
 
