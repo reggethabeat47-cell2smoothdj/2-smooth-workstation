@@ -40,6 +40,12 @@ class AudioPlayer(context: Context) {
         if (prepared && mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
     }
 
+    fun stop() {
+        if (!prepared) return
+        if (mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
+        mediaPlayer?.seekTo(0)
+    }
+
     fun isPlaying(): Boolean = prepared && mediaPlayer?.isPlaying == true
     fun isPrepared(): Boolean = prepared
     fun durationMs(): Int = if (prepared) mediaPlayer?.duration?.coerceAtLeast(0) ?: 0 else 0
@@ -47,8 +53,7 @@ class AudioPlayer(context: Context) {
 
     fun seekTo(positionMs: Int) {
         if (!prepared) return
-        val end = durationMs()
-        mediaPlayer?.seekTo(positionMs.coerceIn(0, end))
+        mediaPlayer?.seekTo(positionMs.coerceIn(0, durationMs()))
     }
 
     fun seekBy(deltaMs: Int) = seekTo(currentPositionMs() + deltaMs)
@@ -60,12 +65,8 @@ class AudioPlayer(context: Context) {
 
     private fun applyPlaybackSpeed() {
         try {
-            mediaPlayer?.playbackParams = MediaPlayer.PlaybackParams()
-                .setSpeed(playbackSpeed)
-                .setPitch(1.0f)
-        } catch (_: IllegalStateException) {
-            // Some device decoders reject speed changes for a particular file.
-        }
+            mediaPlayer?.playbackParams = MediaPlayer.PlaybackParams().setSpeed(playbackSpeed).setPitch(1.0f)
+        } catch (_: IllegalStateException) { }
     }
 
     fun setVolume(volume: Float) {
