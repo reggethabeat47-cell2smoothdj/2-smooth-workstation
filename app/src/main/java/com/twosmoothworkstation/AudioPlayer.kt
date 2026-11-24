@@ -8,6 +8,7 @@ class AudioPlayer(context: Context) {
     private val appContext = context.applicationContext
     private var mediaPlayer: MediaPlayer? = null
     private var prepared = false
+    private var playbackSpeed = 1f
 
     fun load(uri: Uri, onPrepared: () -> Unit = {}, onError: (String) -> Unit = {}) {
         release()
@@ -15,6 +16,7 @@ class AudioPlayer(context: Context) {
         mediaPlayer = player
         player.setOnPreparedListener {
             prepared = true
+            applyPlaybackSpeed()
             onPrepared()
         }
         player.setOnCompletionListener { it.seekTo(0) }
@@ -39,6 +41,32 @@ class AudioPlayer(context: Context) {
     }
 
     fun isPlaying(): Boolean = prepared && mediaPlayer?.isPlaying == true
+    fun isPrepared(): Boolean = prepared
+    fun durationMs(): Int = if (prepared) mediaPlayer?.duration?.coerceAtLeast(0) ?: 0 else 0
+    fun currentPositionMs(): Int = if (prepared) mediaPlayer?.currentPosition?.coerceAtLeast(0) ?: 0 else 0
+
+    fun seekTo(positionMs: Int) {
+        if (!prepared) return
+        val end = durationMs()
+        mediaPlayer?.seekTo(positionMs.coerceIn(0, end))
+    }
+
+    fun seekBy(deltaMs: Int) = seekTo(currentPositionMs() + deltaMs)
+
+    fun setPlaybackSpeed(speed: Float) {
+        playbackSpeed = speed.coerceIn(0.5f, 2.0f)
+        if (prepared) applyPlaybackSpeed()
+    }
+
+    private fun applyPlaybackSpeed() {
+        try {
+            mediaPlayer?.playbackParams = MediaPlayer.PlaybackParams()
+                .setSpeed(playbackSpeed)
+                .setPitch(1.0f)
+        } catch (_: IllegalStateException) {
+            // Some device decoders reject speed changes for a particular file.
+        }
+    }
 
     fun setVolume(volume: Float) {
         val safeVolume = volume.coerceIn(0f, 1f)
