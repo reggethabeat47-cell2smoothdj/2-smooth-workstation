@@ -15,6 +15,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.view.Gravity
@@ -51,10 +53,18 @@ class MainActivity : Activity() {
     private var mediaRecorder: MediaRecorder? = null
     private var recordingUri: Uri? = null
     private var recordingDescriptor: ParcelFileDescriptor? = null
+    private val meterViews = mutableMapOf<Int, LevelMeterView>()
+    private val meterHandler = Handler(Looper.getMainLooper())
+    private val meterRefresh = object : Runnable {
+        override fun run() {
+            for ((deck, view) in meterViews) view.setLevel(audioEngine.meterLevel(deck))
+            meterHandler.postDelayed(this, 60L)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        audioEngine = AudioEngine(this)
+        audioEngine = AudioEngine(this); meterHandler.post(meterRefresh)
         buildScreen()
     }
 
@@ -64,6 +74,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildScreen() {
+        meterViews.clear()
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -215,6 +226,16 @@ class MainActivity : Activity() {
                 setTextColor(0xFFB8B8B8.toInt())
                 gravity = Gravity.START
             }, matchWidth().apply { topMargin = 10 })
+                        val meter = LevelMeterView(this@MainActivity, deckNumber)
+            meterViews[deckNumber] = meter
+            addView(meter, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (24f * resources.displayMetrics.density).toInt()))
+            addView(Button(this@MainActivity).apply {
+                text = "Enable live meters"
+                contentDescription = "Enable live audio output meters for deck $deckNumber"
+                styleButton(this, 0xFF343434.toInt())
+                setOnClickListener { if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { audioEngine.enableMeters(); Toast.makeText(this@MainActivity, "Live audio meters enabled.", Toast.LENGTH_SHORT).show() } else { Toast.makeText(this@MainActivity, "Android needs audio permission to show live output levels.", Toast.LENGTH_LONG).show(); requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_METER_PERMISSION) } }
+            }, matchWidth())
+
             addView(SeekBar(this@MainActivity).apply {
                 max = 100
                 progress = if (deckNumber == 1) deckOneVolumePosition else deckTwoVolumePosition
@@ -343,7 +364,7 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_RECORD_AUDIO && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startRecording()
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) { audioEngine.enableMeters(); if (requestCode == REQUEST_RECORD_AUDIO) startRecording() }
     }
 
     private fun openAudioPicker(deckNumber: Int) {
@@ -377,7 +398,7 @@ class MainActivity : Activity() {
         } })
     }
 
-    override fun onDestroy() {
+    override fun onDestroy() { meterHandler.removeCallbacks(meterRefresh);
         mediaRecorder?.let { try { it.stop() } catch (_: Exception) { }; it.release() }
         recordingDescriptor?.close()
         audioEngine.release()
@@ -389,11 +410,11 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_AUDIO = 27
-        private const val REQUEST_RECORD_AUDIO = 28
+        private const val REQUEST_RECORD_AUDIO = 28; private const val REQUEST_METER_PERMISSION = 29
     }
 }
 
-private class JogWheelView(
+private class LevelMeterView(context: android.content.Context, private val deckNumber: Int) : View(context) { private val paint = Paint(Paint.ANTI_ALIAS_FLAG); private var displayedLevel = 0f; init { contentDescription = "Deck $deckNumber live audio level meter"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }; fun setLevel(level: Float) { val target = level.coerceIn(0f, 1f); displayedLevel = if (target > displayedLevel) displayedLevel + (target - displayedLevel) * 0.72f else maxOf(target, displayedLevel - 0.035f); invalidate() }; override fun onDraw(canvas: Canvas) { super.onDraw(canvas); val segments = 24; val gap = 3f * resources.displayMetrics.density; val segmentWidth = (width - gap * (segments - 1)) / segments; val top = height * 0.18f; val bottom = height * 0.82f; val litCount = (displayedLevel * segments).toInt(); for (index in 0 until segments) { paint.color = when { index >= litCount -> 0xFF303030.toInt(); index >= segments * 0.9f -> 0xFFE53935.toInt(); index >= segments * 0.72f -> 0xFFFFC107.toInt(); else -> 0xFF55D66B.toInt() }; val left = index * (segmentWidth + gap); canvas.drawRoundRect(left, top, left + segmentWidth, bottom, 3f, 3f, paint) } } } private class JogWheelView(
     context: android.content.Context,
     private val deckNumber: Int,
     private val audioEngine: AudioEngine
@@ -410,7 +431,7 @@ private class JogWheelView(
         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
     }
     private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFD21F35.toInt() }
-    private var lastAngle = 0f
+    private var lastAngle = 0f; private var lastMoveTimeMs = 0L
     private var rotation = 0f
     private var touching = false
 
@@ -453,7 +474,7 @@ private class JogWheelView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent.requestDisallowInterceptTouchEvent(true)
-                lastAngle = angle
+                lastAngle = angle; lastMoveTimeMs = event.eventTime
                 touching = true
                 audioEngine.beginScratch(deckNumber)
                 performClick()
@@ -465,8 +486,11 @@ private class JogWheelView(
                 if (delta > 180f) delta -= 360f
                 if (delta < -180f) delta += 360f
                 rotation = (rotation + delta) % 360f
-                audioEngine.scratchBy(deckNumber, (delta / 360f * 1800f).toInt())
-                lastAngle = angle
+                val elapsedMs = (event.eventTime - lastMoveTimeMs).coerceAtLeast(1L)
+                val angularSpeed = kotlin.math.abs(delta) * 1000f / elapsedMs
+                val playbackSpeed = (angularSpeed / 180f).coerceIn(0.15f, 3f)
+                audioEngine.scratchBy(deckNumber, (delta / 360f * 1800f).toInt(), playbackSpeed)
+                lastAngle = angle; lastMoveTimeMs = event.eventTime
                 invalidate()
                 return true
             }
