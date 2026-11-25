@@ -16,7 +16,6 @@ class AudioEngine(context: Context) {
     private var targetBpm = 120f
     private var beatMatchEnabled = false
     private var activeScratchDeck: Int? = null
-    private var resumeAfterScratch = false
 
     fun loadDeck(deckNumber: Int, uri: Uri, onPrepared: () -> Unit = {}, onError: (String) -> Unit = {}) {
         playerFor(deckNumber).load(uri, onPrepared, onError)
@@ -73,9 +72,6 @@ class AudioEngine(context: Context) {
     fun beginScratch(deckNumber: Int) {
         activeScratchDeck?.let { endScratch(it) }
         activeScratchDeck = deckNumber
-        val player = playerFor(deckNumber)
-        resumeAfterScratch = player.isPlaying()
-        if (resumeAfterScratch) player.pause()
     }
 
     fun scratchBy(deckNumber: Int, deltaMs: Int) {
@@ -85,11 +81,7 @@ class AudioEngine(context: Context) {
     }
 
     fun endScratch(deckNumber: Int) {
-        if (activeScratchDeck != deckNumber) return
-        activeScratchDeck = null
-        val shouldResume = resumeAfterScratch
-        resumeAfterScratch = false
-        if (shouldResume) playerFor(deckNumber).play()
+        if (activeScratchDeck == deckNumber) activeScratchDeck = null
     }
 
     fun release() {
