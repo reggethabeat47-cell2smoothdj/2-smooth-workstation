@@ -1,15 +1,20 @@
 package com.twosmoothworkstation
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.PlaybackParams
+import android.media.audiofx.Visualizer
 import android.net.Uri
+import kotlin.math.sqrt
 
 class AudioPlayer(context: Context) {
     private val appContext = context.applicationContext
     private var mediaPlayer: MediaPlayer? = null
+    private var visualizer: Visualizer? = null
     private var prepared = false
     private var playbackSpeed = 1f
+    @Volatile private var outputLevel = 0f
 
     fun load(uri: Uri, onPrepared: () -> Unit = {}, onError: (String) -> Unit = {}) {
         release()
@@ -18,6 +23,7 @@ class AudioPlayer(context: Context) {
         player.setOnPreparedListener {
             prepared = true
             applyPlaybackSpeed()
+            if (hasAudioPermission()) attachVisualizer(it)
             onPrepared()
         }
         player.setOnCompletionListener { it.seekTo(0) }
@@ -46,6 +52,12 @@ class AudioPlayer(context: Context) {
 
     fun isPlaying(): Boolean = prepared && mediaPlayer?.isPlaying == true
     fun isPrepared(): Boolean = prepared
+    fun meterLevel(): Float = outputLevel
+
+    fun enableMeter() {
+        if (prepared && hasAudioPermission()) mediaPlayer?.let(::attachVisualizer)
+    }
+
     fun durationMs(): Int = if (prepared) mediaPlayer?.duration?.coerceAtLeast(0) ?: 0 else 0
     fun currentPositionMs(): Int = if (prepared) mediaPlayer?.currentPosition?.coerceAtLeast(0) ?: 0 else 0
 
@@ -61,6 +73,15 @@ class AudioPlayer(context: Context) {
         if (prepared) applyPlaybackSpeed()
     }
 
+    fun setScratchSpeed(speed: Float) {
+        if (!prepared) return
+        val safeSpeed = speed.coerceIn(0.15f, 3.0f)
+        try {
+            mediaPlayer?.playbackParams = PlaybackParams().setSpeed(safeSpeed).setPitch(safeSpeed)
+        } catch (_: IllegalStateException) { }
+        catch (_: IllegalArgumentException) { }
+    }
+
     private fun applyPlaybackSpeed() {
         try {
             mediaPlayer?.playbackParams = PlaybackParams().setSpeed(playbackSpeed).setPitch(1.0f)
@@ -74,10 +95,44 @@ class AudioPlayer(context: Context) {
 
     fun release() {
         prepared = false
+        visualizer?.setDataCaptureListener(null, 0, false, false)
+        visualizer?.enabled = false
+        visualizer?.release()
+        visualizer = null
+        outputLevel = 0f
         mediaPlayer?.setOnPreparedListener(null)
         mediaPlayer?.setOnCompletionListener(null)
         mediaPlayer?.setOnErrorListener(null)
         mediaPlayer?.release()
         mediaPlayer = null
+    }
+
+    private fun hasAudioPermission(): Boolean =
+        appContext.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun attachVisualizer(player: MediaPlayer) {
+        if (visualizer != null) return
+        try {
+            val meter = Visualizer(player.audioSessionId)
+            meter.captureSize = Visualizer.getCaptureSizeRange()[1]
+            meter.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
+                override fun onWaveFormDataCapture(visualizer: Visualizer, waveform: ByteArray, samplingRate: Int) {
+                    if (waveform.isEmpty()) return
+                    var sumSquares = 0.0
+                    for (sample in waveform) {
+                        val centered = (sample.toInt() and 0xFF) - 128
+                        sumSquares += centered * centered
+                    }
+                    val rms = sqrt(sumSquares / waveform.size) / 128.0
+                    outputLevel = (rms * 3.2).toFloat().coerceIn(0f, 1f)
+                }
+
+                override fun onFftDataCapture(visualizer: Visualizer, fft: ByteArray, samplingRate: Int) = Unit
+            }, Visualizer.getMaxCaptureRate() / 2, true, false)
+            meter.enabled = true
+            visualizer = meter
+        } catch (_: RuntimeException) {
+            // Some Android devices disable output visualization. Playback remains available.
+        }
     }
 }
