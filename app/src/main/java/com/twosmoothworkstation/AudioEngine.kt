@@ -29,6 +29,12 @@ class AudioEngine(context: Context) {
     fun rewind(deckNumber: Int, amountMs: Int = 10000) = playerFor(deckNumber).seekBy(-amountMs)
     fun isPlaying(deckNumber: Int): Boolean = playerFor(deckNumber).isPlaying()
     fun isReady(deckNumber: Int): Boolean = playerFor(deckNumber).isPrepared()
+    fun meterLevel(deckNumber: Int): Float = playerFor(deckNumber).meterLevel()
+
+    fun enableMeters() {
+        deckOne.enableMeter()
+        deckTwo.enableMeter()
+    }
 
     fun setDeckVolume(deckNumber: Int, volume: Float) {
         when (deckNumber) {
@@ -74,14 +80,18 @@ class AudioEngine(context: Context) {
         activeScratchDeck = deckNumber
     }
 
-    fun scratchBy(deckNumber: Int, deltaMs: Int) {
+    fun scratchBy(deckNumber: Int, deltaMs: Int, speed: Float) {
         if (activeScratchDeck == deckNumber && playerFor(deckNumber).isPrepared()) {
+            playerFor(deckNumber).setScratchSpeed(speed)
             playerFor(deckNumber).seekBy(deltaMs)
         }
     }
 
     fun endScratch(deckNumber: Int) {
-        if (activeScratchDeck == deckNumber) activeScratchDeck = null
+        if (activeScratchDeck == deckNumber) {
+            activeScratchDeck = null
+            applyPlaybackSpeeds()
+        }
     }
 
     fun release() {
